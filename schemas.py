@@ -2,6 +2,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class AccountCreate(BaseModel):
     name: str
+    allow_overdraft: bool | None = None
 
 class TransferCreate(BaseModel):
     from_account_id: int

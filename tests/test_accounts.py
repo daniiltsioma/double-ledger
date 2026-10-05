@@ -9,6 +9,7 @@ def test_create_account_requires_name(client):
     response = client.post("/accounts", json={})
     assert response.status_code == 422
 
+
 def test_new_account_has_zero_balance(client):
     account_id = client.post("/accounts", json={"name": "Alice"}).json()["id"]
     response = client.get(f"/accounts/{account_id}")

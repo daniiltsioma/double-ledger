@@ -1,4 +1,6 @@
 import os
+import alembic
+from alembic import config, command
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
@@ -13,6 +15,12 @@ TestingSessionLocal = sessionmaker(bind=engine)
 def override_get_db():
     with TestingSessionLocal() as session:
         yield session
+
+@pytest.fixture(scope="session", autouse=True)
+def migrate_test_database():
+    alembic_cfg = config.Config("alembic.ini")
+    alembic_cfg.set_main_option("sqlalchemy.url", os.environ["TEST_DB_STRING"])
+    command.upgrade(alembic_cfg, "head")
 
 @pytest.fixture(autouse=True)
 def clean_tables():
