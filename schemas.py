@@ -15,6 +15,9 @@ class TransferCreate(BaseModel):
         if self.from_account_id == self.to_account_id:
             raise ValueError("accounts must differ")
         return self
+    
+class ReversalCreate(BaseModel):
+    transaction_id: int 
 
 class EntryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -24,5 +27,11 @@ class EntryOut(BaseModel):
 
 class TransferOut(BaseModel):
     transaction_id: int
+    description: str
+    entries: list[EntryOut]
+
+class ReversalOut(BaseModel):
+    transaction_id: int
+    reverses_transaction_id: int
     description: str
     entries: list[EntryOut]

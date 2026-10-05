@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 from database import SessionLocal
 
 from models import Account, Entry
-from schemas import AccountCreate, TransferCreate, TransferOut
-from services import AccountNotFound, InsuffientFunds, create_transfer, get_balance
+from schemas import AccountCreate, ReversalCreate, ReversalOut, TransferCreate, TransferOut
+from services import AccountNotFound, AlreadyReversed, InsuffientFunds, ReversingAReversal, TransactionNotFound, create_reversal, create_transfer, get_balance
 
 app = FastAPI()
 
@@ -45,5 +45,23 @@ def post_transfer(transfer_in: TransferCreate, db: Session = Depends(get_db)):
     return TransferOut(
         transaction_id=transaction.id,
         description=transaction.description,
+        entries=entries
+    ) 
+
+@app.post("/reversals", status_code=201)
+def post_reversal(reversal_in: ReversalCreate, db: Session = Depends(get_db)):
+    try:
+        reversal, entries = create_reversal(db, reversal_in.transaction_id)
+    except TransactionNotFound as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ReversingAReversal as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except AlreadyReversed as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    
+    return ReversalOut(
+        transaction_id=reversal.id,
+        reverses_transaction_id=reversal.reverses_transaction_id,
+        description=reversal.description,
         entries=entries
     )

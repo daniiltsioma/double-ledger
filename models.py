@@ -25,3 +25,4 @@ class Transaction(Base):
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     description: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reverses_transaction_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("transactions.id"), unique=True, nullable=True)

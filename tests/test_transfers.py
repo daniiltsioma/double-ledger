@@ -205,7 +205,6 @@ def test_transfer_that_brings_balance_to_zero_succeeds(client, db):
 
 def test_account_allowing_overdrafts_can_go_negative(client, db):
     credit = make_credit_account(client)
-    
     alice = make_account(client, "Alice")
 
     response = client.post("/transfers", json={
@@ -224,3 +223,102 @@ def test_new_account_does_not_allow_overdrafts(client, db):
     alice = make_account(client, "Alice")
     assert client.get(f"/accounts/{alice}").json()["allow_overdraft"] == False
     
+
+# Reversal restores both balances.
+def test_reversal_restores_both_balances(client, db):
+    credit = make_credit_account(client)
+    alice = make_account(client, "Alice")
+    john = make_account(client, "John")
+
+    credit_funds(client, credit, alice, 300)
+    credit_funds(client, credit, john, 200)
+    
+    transfer_response = client.post("/transfers", json={
+        "from_account_id": alice,
+        "to_account_id": john,
+        "amount": 200,
+        "description": "Initial transfer"
+    })
+
+    client.post("/reversals", json={
+        "transaction_id": transfer_response.json()["transaction_id"]
+    })
+
+    assert client.get(f"/accounts/{alice}").json()["balance"] == 300
+    assert client.get(f"/accounts/{john}").json()["balance"] == 200
+
+
+
+# Reversing twice fails.
+def test_reversing_twice_fails(client, db):
+    credit = make_credit_account(client)
+    alice = make_account(client, "Alice")
+    john = make_account(client, "John")
+
+    credit_funds(client, credit, alice, 300)
+    credit_funds(client, credit, john, 200)
+
+    transaction_id = client.post("/transfers", json={
+        "from_account_id": alice,
+        "to_account_id": john,
+        "amount": 200,
+        "description": "Initial transfer"
+    }).json()["transaction_id"]
+
+    client.post("/reversals", json={
+        "transaction_id": transaction_id
+    })
+    
+    response = client.post("/reversals", json={
+        "transaction_id": transaction_id
+    })
+
+    assert response.status_code == 409
+    
+# Reversing a reversal fails.
+def test_reverse_a_reversal_fails(client, db):
+    credit = make_credit_account(client)
+    alice = make_account(client, "Alice")
+    john = make_account(client, "John")
+
+    credit_funds(client, credit, alice, 300)
+    credit_funds(client, credit, john, 200)
+
+    transaction_id = client.post("/transfers", json={
+        "from_account_id": alice,
+        "to_account_id": john,
+        "amount": 200,
+        "description": "Initial transfer"
+    }).json()["transaction_id"]
+    
+    reversal_id = client.post("/reversals", json={
+        "transaction_id": transaction_id
+    }).json()["transaction_id"]
+
+    response = client.post("/reversals", json={
+        "transaction_id": reversal_id
+    })
+
+    assert response.status_code == 409
+
+# A missing transaction fails.
+def test_reversing_missing_transaction_fails(client, db):
+    credit = make_credit_account(client)
+    alice = make_account(client, "Alice")
+    john = make_account(client, "John")
+
+    credit_funds(client, credit, alice, 300)
+    credit_funds(client, credit, john, 200)
+
+    transaction_id = client.post("/transfers", json={
+        "from_account_id": alice,
+        "to_account_id": john,
+        "amount": 200,
+        "description": "Initial transfer"
+    }).json()["transaction_id"]
+
+    response = client.post("/reversals", json={
+        "transaction_id": transaction_id + 123
+    })
+
+    assert response.status_code == 400
