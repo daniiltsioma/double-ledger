@@ -1,11 +1,14 @@
-from fastapi import Depends, FastAPI, HTTPException
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import Depends, FastAPI, HTTPException, Header
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from database import SessionLocal
 
 from models import Account, Entry
 from schemas import AccountCreate, ReversalCreate, ReversalOut, TransferCreate, TransferOut
-from services import AccountNotFound, AlreadyReversed, InsuffientFunds, ReversingAReversal, TransactionNotFound, create_reversal, create_transfer, get_balance
+from services import AccountNotFound, AlreadyReversed, IdempotencyKeyReused, InsuffientFunds, ReversingAReversal, TransactionNotFound, create_reversal, create_transfer, get_balance
 
 app = FastAPI()
 
@@ -34,12 +37,25 @@ def post_account(account_in: AccountCreate, db: Session = Depends(get_db)):
     return {"id": account.id, "name": account.name}
 
 @app.post("/transfers", status_code=201, response_model=TransferOut)
-def post_transfer(transfer_in: TransferCreate, db: Session = Depends(get_db)):
+def post_transfer(
+    transfer_in: TransferCreate, 
+    idempotency_key: Annotated[str, Header()],
+    db: Session = Depends(get_db)
+):
     try:
-        transaction, entries = create_transfer(db, transfer_in.from_account_id, transfer_in.to_account_id, transfer_in.amount, transfer_in.description)
+        transaction, entries = create_transfer(
+            db, 
+            transfer_in.from_account_id, 
+            transfer_in.to_account_id, 
+            transfer_in.amount, 
+            transfer_in.description,
+            idempotency_key
+        )
     except AccountNotFound as e:
         raise HTTPException(status_code=422, detail=str(e))
     except InsuffientFunds as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except IdempotencyKeyReused as e:
         raise HTTPException(status_code=409, detail=str(e))
     
     return TransferOut(

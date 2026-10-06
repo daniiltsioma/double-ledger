@@ -1,5 +1,6 @@
 from datetime import datetime
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Identity, Text, Boolean, func
+import uuid
+from sqlalchemy import UUID, BigInteger, CheckConstraint, DateTime, ForeignKey, Identity, Text, Boolean, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class Base(DeclarativeBase):
@@ -26,3 +27,10 @@ class Transaction(Base):
     description: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     reverses_transaction_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("transactions.id"), unique=True, nullable=True)
+
+class IdempotencyKey(Base):
+    __tablename__ = "idempotency_keys"
+    key: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
+    transaction_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("transactions.id"), unique=True)
+    request_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

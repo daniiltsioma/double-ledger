@@ -1,7 +1,10 @@
+from concurrent.futures import ThreadPoolExecutor
+import uuid
+
 import pytest
 from sqlalchemy import func, select
 
-from models import Entry, Transaction
+from models import Entry, IdempotencyKey, Transaction
 
 def make_credit_account(client):
     return client.post("/accounts", json={"name": "Credit", "allow_overdraft": True}).json()["id"]
@@ -14,8 +17,11 @@ def credit_funds(client, from_credit, to_account, amount):
         "from_account_id": from_credit,
         "to_account_id": to_account,
         "amount": amount,
-        "description": "Credit"
-    })
+        "description": "Credit",
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
+
+def generate_idempotency_key():
+    return str(uuid.uuid4())
 
 
 def test_transfer_moves_money(client):
@@ -30,7 +36,7 @@ def test_transfer_moves_money(client):
         "to_account_id": shop,
         "amount": 349,
         "description": "Red Bull"
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     assert response.status_code == 201
     assert client.get(f"/accounts/{alice}").json()["balance"] == 151
@@ -46,7 +52,7 @@ def test_transfer_rejects_non_positive_amount(client, amount):
         "to_accound_id": shop,
         "amount": amount,
         "description": "Bad transfer"
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     assert response.status_code == 422
 
@@ -58,7 +64,7 @@ def test_transfer_to_missing_account_writes_nothing(client, db):
         "to_accound_id": 999,
         "amount": 349,
         "description": "Nowhere"
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     assert response.status_code == 422
     assert db.scalar(select(func.count()).select_from(Transaction)) == 0
@@ -72,7 +78,7 @@ def test_transfer_from_account_to_itself_forbidden(client):
         "to_accound_id": alice,
         "amount": 349,
         "description": "Forbidden"
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     assert response.status_code == 422
     
@@ -84,7 +90,7 @@ def test_transfer_from_nonexistent_account_writes_nothing(client, db):
         "to_accound_id": alice,
         "amount": 349,
         "description": "sender non-existent"
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     assert response.status_code == 422
     assert db.scalar(select(func.count()).select_from(Transaction)) == 0
@@ -121,14 +127,14 @@ def test_transfer_leaves_money_balanced(client, db):
         "to_accound_id": susan,
         "amount": 99,
         "description": "transfer 4"
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     response = client.post("/transfers", json={
         "from_account_id": alice,
         "to_accound_id": john,
         "amount": 1349,
         "description": "transfer 1"
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     alice_balance = client.get(f"/accounts/{alice}").json()["balance"]
     john_balance = client.get(f"/accounts/{john}").json()["balance"]
@@ -153,7 +159,7 @@ def test_transfer_within_available_balance_succeeds(client, db):
         "to_account_id": john,
         "amount": 100,
         "description": "Balance exceeded"
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     assert response.status_code == 201
     assert client.get(f"/accounts/{alice}").json()["balance"] == 100
@@ -174,7 +180,7 @@ def test_transfer_from_non_overdraft_fails(client, db):
         "to_account_id": john,
         "amount": 400,
         "description": "Balance exceeded"
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     assert response.status_code == 409
     assert client.get(f"/accounts/{alice}").json()["balance"] == 200
@@ -196,7 +202,7 @@ def test_transfer_that_brings_balance_to_zero_succeeds(client, db):
         "to_account_id": john,
         "amount": 200,
         "description": "Bring balance to zero"
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     assert response.status_code == 201
     assert client.get(f"/accounts/{alice}").json()["balance"] == 0
@@ -212,7 +218,7 @@ def test_account_allowing_overdrafts_can_go_negative(client, db):
         "to_account_id": alice,
         "amount": 400,
         "description": "Transfer from credit account"
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     assert response.status_code == 201
     assert client.get(f"/accounts/{credit}").json()["balance"] == -400
@@ -238,7 +244,7 @@ def test_reversal_restores_both_balances(client, db):
         "to_account_id": john,
         "amount": 200,
         "description": "Initial transfer"
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     client.post("/reversals", json={
         "transaction_id": transfer_response.json()["transaction_id"]
@@ -263,15 +269,15 @@ def test_reversing_twice_fails(client, db):
         "to_account_id": john,
         "amount": 200,
         "description": "Initial transfer"
-    }).json()["transaction_id"]
+    }, headers={"Idempotency-Key": generate_idempotency_key()}).json()["transaction_id"]
 
     client.post("/reversals", json={
         "transaction_id": transaction_id
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
     
     response = client.post("/reversals", json={
         "transaction_id": transaction_id
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     assert response.status_code == 409
     
@@ -289,15 +295,15 @@ def test_reverse_a_reversal_fails(client, db):
         "to_account_id": john,
         "amount": 200,
         "description": "Initial transfer"
-    }).json()["transaction_id"]
+    }, headers={"Idempotency-Key": generate_idempotency_key()}).json()["transaction_id"]
     
     reversal_id = client.post("/reversals", json={
         "transaction_id": transaction_id
-    }).json()["transaction_id"]
+    }, headers={"Idempotency-Key": generate_idempotency_key()}).json()["transaction_id"]
 
     response = client.post("/reversals", json={
         "transaction_id": reversal_id
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     assert response.status_code == 409
 
@@ -315,10 +321,195 @@ def test_reversing_missing_transaction_fails(client, db):
         "to_account_id": john,
         "amount": 200,
         "description": "Initial transfer"
-    }).json()["transaction_id"]
+    }, headers={"Idempotency-Key": generate_idempotency_key()}).json()["transaction_id"]
 
     response = client.post("/reversals", json={
         "transaction_id": transaction_id + 123
-    })
+    }, headers={"Idempotency-Key": generate_idempotency_key()})
 
     assert response.status_code == 400
+
+# Require idempotency keys
+def test_transfer_without_idempotency_key_fails(client, db):
+    credit = make_credit_account(client)
+    alice = make_account(client, "Alice")
+
+    response = client.post("/transfers", json={
+        "from_account_id": credit,
+        "to_account_id": alice,
+        "amount": 200,
+        "description": "Credit"
+    })
+
+    assert response.status_code == 422 
+
+# Test successful itempotency replay
+def test_idempotency_replay_with_the_same_request_succeeds(client, db):
+    credit = make_credit_account(client)
+    alice = make_account(client, "Alice")
+    john = make_account(client, "John")
+
+    credit_funds(client, credit, alice, 300)
+    credit_funds(client, credit, john, 200)
+
+    initial_transactions = db.scalar(select(func.count()).select_from(Transaction))
+    initial_entries = db.scalar(select(func.count()).select_from(Entry))
+
+    key = generate_idempotency_key()
+
+    original_response = client.post("/transfers", json={
+        "from_account_id": credit,
+        "to_account_id": alice,
+        "amount": 200,
+        "description": "Credit"
+    }, headers={"Idempotency-Key": key})
+
+    alice_balance_original = client.get(f"/accounts/{alice}").json()["balance"]
+    john_balance_original = client.get(f"/accounts/{john}").json()["balance"]
+
+    replay_response = client.post("/transfers", json={
+        "from_account_id": credit,
+        "to_account_id": alice,
+        "amount": 200,
+        "description": "Credit"
+    }, headers={"Idempotency-Key": key})
+
+    alice_balance_replay = client.get(f"/accounts/{alice}").json()["balance"]
+    john_balance_replay = client.get(f"/accounts/{john}").json()["balance"]
+
+    # transaction id remains the same during replay
+    assert original_response.json()["transaction_id"] == replay_response.json()["transaction_id"]
+    # balance changes only once
+    assert alice_balance_original == alice_balance_replay
+    assert john_balance_original  == john_balance_replay
+    # the whole run only creates 1 transaction with 2 entries
+    assert db.scalar(select(func.count()).select_from(Transaction)) - initial_transactions == 1
+    assert db.scalar(select(func.count()).select_from(Entry)) - initial_entries == 2
+
+
+# Replay with different request fails
+def test_idempotency_replay_with_different_request_fails(client, db):
+    credit = make_credit_account(client)
+    alice = make_account(client, "Alice")
+    john = make_account(client, "John")
+
+    credit_funds(client, credit, alice, 300)
+    credit_funds(client, credit, john, 200)
+
+    initial_transactions = db.scalar(select(func.count()).select_from(Transaction))
+    initial_entries = db.scalar(select(func.count()).select_from(Entry))
+
+    key = generate_idempotency_key()
+
+    client.post("/transfers", json={
+        "from_account_id": credit,
+        "to_account_id": alice,
+        "amount": 200,
+        "description": "Credit"
+    }, headers={"Idempotency-Key": key}).json()["transaction_id"]
+
+    response = client.post("/transfers", json={
+        "from_account_id": credit,
+        "to_account_id": alice,
+        "amount": 300,
+        "description": "Credit"
+    }, headers={"Idempotency-Key": key})
+
+    assert response.status_code == 409
+    assert db.scalar(select(func.count()).select_from(Transaction)) - initial_transactions == 1
+    assert db.scalar(select(func.count()).select_from(Entry)) - initial_entries == 2
+
+# Identical requests with different keys succeed both
+def test_identical_requests_with_different_keys_succeed(client, db):
+    credit = make_credit_account(client)
+    alice = make_account(client, "Alice")
+    john = make_account(client, "John")
+
+    credit_funds(client, credit, alice, 500)
+    credit_funds(client, credit, john, 200)
+
+    initial_transactions = db.scalar(select(func.count()).select_from(Transaction))
+    initial_entries = db.scalar(select(func.count()).select_from(Entry))
+
+    key = generate_idempotency_key()
+
+    client.post("/transfers", json={
+        "from_account_id": alice,
+        "to_account_id": john,
+        "amount": 200,
+        "description": "Transfer"
+    }, headers={"Idempotency-Key": key}).json()["transaction_id"]
+
+    different_key = generate_idempotency_key()
+
+    client.post("/transfers", json={
+        "from_account_id": alice,
+        "to_account_id": john,
+        "amount": 200,
+        "description": "Transfer"
+    }, headers={"Idempotency-Key": different_key}).json()["transaction_id"]
+
+    assert client.get(f"/accounts/{alice}").json()["balance"] == 100
+    assert client.get(f"/accounts/{john}").json()["balance"] == 600
+    assert db.scalar(select(func.count()).select_from(Transaction)) - initial_transactions == 2
+    assert db.scalar(select(func.count()).select_from(Entry)) - initial_entries == 4
+
+# Idempotency key is not stored in case of failed transfer, may be reused later.
+def test_retry_with_same_key_works_after_failure(client, db):
+    credit = make_credit_account(client)
+    alice = make_account(client, "Alice")
+    john = make_account(client, "John")
+
+    credit_funds(client, credit, alice, 200)
+
+    initial_keys = db.scalar(select(func.count()).select_from(IdempotencyKey))
+
+    key = generate_idempotency_key()
+
+    response = client.post("/transfers", json={
+        "from_account_id": alice,
+        "to_account_id": john,
+        "amount": 300,
+        "description": "Transfer"
+    }, headers={"Idempotency-Key": key})
+    
+    # insufficient funds
+    assert response.status_code == 409
+    assert db.scalar(select(func.count()).select_from(IdempotencyKey)) == initial_keys
+
+    # funds added, request succeeds with same key:
+    # the key was never stored
+    credit_funds(client, credit, alice, 200)
+    response = client.post("/transfers", json={
+        "from_account_id": alice,
+        "to_account_id": john,
+        "amount": 300,
+        "description": "Transfer"
+    }, headers={"Idempotency-Key": key})
+
+    assert response.status_code == 201
+    assert db.scalar(select(func.count()).select_from(IdempotencyKey)) - initial_keys == 2
+
+# Concurrent requests handled idempotently.
+def test_concurrent_requests_are_idempotent(client):
+    credit = make_credit_account(client)
+    alice = make_account(client, "Alice")
+    john = make_account(client, "John")
+
+    credit_funds(client, credit, alice, 300)
+    credit_funds(client, credit, john, 200)
+
+    key = generate_idempotency_key()
+
+    def transfer(i):
+        return client.post("/transfers", json={
+            "from_account_id": alice,
+            "to_account_id": john,
+            "amount": 200,
+            "description": "Transfer"
+        }, headers={"Idempotency-Key": key}).json()["transaction_id"]
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        transaction_ids = executor.map(transfer, range(5)) 
+        
+        assert len(set(transaction_ids)) == 1
